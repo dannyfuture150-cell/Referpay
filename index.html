@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>ReferPay</title>
+<style>
+:root{--bg:#f6f7f9;--card:#fff;--text:#14181f;--muted:#6a7280;--accent:#0f9d6b;--accent-t:#fff;--line:#e3e6eb;--err:#c0392b;color-scheme:light}
+@media (prefers-color-scheme:dark){:root{--bg:#0f1216;--card:#1a1f26;--text:#eef1f5;--muted:#9aa3b0;--accent:#27c58e;--accent-t:#06150e;--line:#2a313b;--err:#ff7b6b;color-scheme:dark}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:16px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif;padding:env(safe-area-inset-top,0) 0 env(safe-area-inset-bottom,0)}
+main{max-width:560px;margin:0 auto;padding:16px}
+h1{font-size:22px;margin:6px 0 10px}h2{font-size:15px;margin:0 0 10px}
+p{margin:0 0 10px;color:var(--muted);font-size:14px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px;margin-bottom:14px}
+input,select{width:100%;padding:12px;border:1px solid var(--line);border-radius:10px;background:var(--bg);color:var(--text);font:inherit;margin-bottom:10px}
+button{width:100%;padding:13px;border:0;border-radius:10px;background:var(--accent);color:var(--accent-t);font:inherit;font-weight:600;cursor:pointer}
+button.alt{background:transparent;color:var(--text);border:1px solid var(--line)}button:disabled{opacity:.5}
+.tabs{display:flex;gap:6px;overflow-x:auto;margin:10px 0 14px}
+.tabs a{flex:1;text-align:center;padding:10px 8px;border:1px solid var(--line);border-radius:10px;text-decoration:none;color:var(--text);font-size:14px;white-space:nowrap;background:var(--card)}
+.tabs a.on{background:var(--accent);color:var(--accent-t);border-color:var(--accent);font-weight:600}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px}.grid .card{margin:0;text-align:center}
+.big{font-size:26px;font-weight:700}small{color:var(--muted)}
+.tw{overflow-x:auto}table{width:100%;border-collapse:collapse;font-size:14px}
+th,td{text-align:left;padding:9px 6px;border-top:1px solid var(--line);white-space:nowrap}th{color:var(--muted);font-weight:500;border-top:0}
+.g{color:var(--accent);font-weight:600}.mu{color:var(--muted)}.err{color:var(--err);font-size:14px;margin:0 0 10px;min-height:0}
+.row{display:flex;gap:8px}.row input{margin:0}.row button{width:auto;padding:12px 16px}
+a.lnk{color:var(--accent);font-weight:600;cursor:pointer}
+</style>
+</head>
+<body>
+<main id="app"></main>
+<script>
+const $ = (id) => document.getElementById(id);
+const money = (p) => "GH₵" + (p / 100).toFixed(2);
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+let TOKEN = null, ME = null, mode = "login", NOTICE = "", AUTHERR = "", CFG = { price: 5000 };
+try { TOKEN = localStorage.getItem("rp_token"); } catch (e) {}
+const setToken = (t) => { TOKEN = t; try { t ? localStorage.setItem("rp_token", t) : localStorage.removeItem("rp_token"); } catch (e) {} };
+
+async function api(path, body) {
+  const r = await fetch("/api" + path, {
+    method: body ? "POST" : "GET",
+    headers: { "Content-Type": "application/json", ...(TOKEN ? { Authorization: "Bearer " + TOKEN } : {}) },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) { if (r.status === 401 && TOKEN) { setToken(null); ME = null; } throw new Error(j.error || "Something went wrong."); }
+  return j;
+}
+
+const tabs = [["home", "Home"], ["downlines", "Downlines"], ["earnings", "Earnings"], ["payout", "Withdraw"]];
+const route = () => { const h = (location.hash || "#home").slice(1); return tabs.some((t) => t[0] === h) ? h : "home"; };
+const refParam = new URLSearchParams(location.search).get("ref") || "";
+
+function authView() {
+  const su = mode === "signup";
+  $("app").innerHTML = `<h1>ReferPay</h1><div class="card"><h2>${su ? "Create your account" : "Log in"}</h2>${NOTICE ? `<p class="g">${esc(NOTICE)}</p>` : ""}
+  ${su ? `<input id="name" placeholder="Full name" autocomplete="name"><input id="email" type="email" placeholder="Email" autocomplete="email">` : ""}
+  <input id="phone" inputmode="tel" placeholder="Phone (0551234567)" autocomplete="tel">
+  ${su ? `<select id="network"><option value="">Mobile money network</option><option value="MTN">MTN MoMo</option><option value="TELECEL">Telecel Cash</option><option value="AIRTELTIGO">AirtelTigo Money</option></select>
+  <input id="ref" placeholder="Referral code" value="${esc(refParam)}">
+  <select id="side"><option value="">Join which side? (Left or Right)</option><option value="L">Left</option><option value="R">Right</option></select>` : ""}
+  <input id="password" type="password" placeholder="Password (8+ characters)" autocomplete="${su ? "new-password" : "current-password"}">
+  ${su ? `<p>Create your account first. To unlock your referral link and earn rewards, you then activate it with a one-time ${money(CFG.price)} payment.</p>` : ""}<p class="err" id="err"></p><button id="go">${su ? "Create account" : "Log in"}</button></div>
+  <p style="text-align:center"><a class="lnk" id="sw">${su ? "I already have an account" : "Create an account"}</a></p>`;
+  $("err").textContent = AUTHERR; AUTHERR = "";
+  $("sw").onclick = () => { mode = su ? "login" : "signup"; authView(); };
+  $("go").onclick = async () => {
+    const v = (id) => ($(id) ? $(id).value.trim() : undefined);
+    $("go").disabled = true; $("err").textContent = "";
+    try {
+      const body = su ? { name: v("name"), email: v("email"), phone: v("phone"), network: v("network"), ref: v("ref"), side: v("side"), password: $("password").value }
+                      : { phone: v("phone"), password: $("password").value };
+      const r = await api(su ? "/signup" : "/login", body);
+      NOTICE = ""; setToken(r.token); await boot();
+    } catch (e) { $("err").textContent = e.message; $("go").disabled = false; }
+  };
+}
+
+function activateView() {
+  const m = ME;
+  $("app").innerHTML = `<h1>Hi, ${esc(m.name)}</h1>
+  <div class="card"><h2>Activate your account</h2>
+  <p style="font-size:26px;font-weight:700;color:var(--text)">${money(m.price)} <span style="font-size:14px;font-weight:400" class="mu">one-time</span></p>
+  <p>Activation unlocks your referral link and lets you earn rewards when people you refer, and people they refer, activate their accounts.</p>
+  <p style="margin-bottom:4px"><b>Where the ${money(m.price)} goes</b></p>
+  <p style="margin:0">Up to ${money(m.rewards.both * 2)}: rewards for members above you</p>
+  <p>The rest: platform costs and running the business</p>
+  <p>Earnings are not guaranteed. You only earn if people you refer also activate.</p>
+  <p class="err" id="err"></p>
+  <button id="buy">Pay ${money(m.price)} to activate</button>
+  <button class="alt" id="chk" style="margin-top:10px">I have already paid, check again</button></div>
+  <button class="alt" id="out">Log out</button>`;
+  $("out").onclick = () => { setToken(null); ME = null; authView(); };
+  $("buy").onclick = async () => { $("buy").disabled = true; try { location.href = (await api("/checkout", {})).url; } catch (e) { $("err").textContent = e.message; $("buy").disabled = false; } };
+  $("chk").onclick = async () => { $("chk").disabled = true; try { await api("/activation/check", {}); await boot(); } catch (e) { $("err").textContent = e.message; $("chk").disabled = false; } };
+}
+
+function appView() {
+  if (!ME.active) return activateView();
+  const r = route(), m = ME, nL = m.downlines.filter((d) => d.leg === "L").length, nR = m.downlines.filter((d) => d.leg === "R").length;
+  let pg = "";
+  if (r === "home") {
+    const link = location.origin + "/?ref=" + m.code;
+    pg = `<div class="grid"><div class="card"><div class="big g">${money(m.balance)}</div><small>Available to withdraw</small></div>
+    <div class="card"><div class="big">${m.downlines.length}</div><small>Downlines (combined)</small></div>
+    <div class="card"><div class="big">${m.downlines.filter((d) => d.active).length}</div><small>Active</small></div>
+    <div class="card"><div class="big">${m.downlines.filter((d) => !d.active).length}</div><small>Pending</small></div>
+    <div class="card"><div class="big">${nL}</div><small>Left side</small></div><div class="card"><div class="big">${nR}</div><small>Right side</small></div></div>
+    ${m.pendingAmount > 0 ? `<p class="mu" style="margin:0 0 14px">${money(m.pendingAmount)} of new earnings becomes available to withdraw within ${m.holdHours} hours.</p>` : ""}
+    <div class="card"><h2>Your referral link</h2><div class="row"><input id="lk" value="${esc(link)}" readonly><button id="cp">Copy</button></div>
+    <p style="margin-top:10px">Code: <b>${esc(m.code)}</b>. When anyone below you activates their account, you earn ${money(m.rewards.both)} if you have people on both your left and right sides, or ${money(m.rewards.one)} if only one side. The amount halves for each level between you and the buyer, with a minimum of GH₵0.01, all the way to the top.</p></div>
+    <p class="err" id="err"></p>`;
+  } else if (r === "downlines") {
+    const tot = m.downlines.reduce((a, d) => a + d.earned, 0);
+    pg = `<div class="card"><h2>All downlines combined (${m.downlines.length})</h2>
+    <p>Left: ${nL} people (${money(m.downlines.filter((d) => d.leg === "L").reduce((a, d) => a + d.earned, 0))}) · Right: ${nR} people (${money(m.downlines.filter((d) => d.leg === "R").reduce((a, d) => a + d.earned, 0))}). ★ = you sponsored them.</p>
+    ${m.downlines.length ? `<div class="tw"><table><tr><th>Name</th><th>Side</th><th>Level</th><th>Status</th><th>You earned</th></tr>
+    ${m.downlines.map((d) => `<tr><td>${esc(d.name)}${d.direct ? " ★" : ""}</td><td>${d.leg === "L" ? "Left" : "Right"}</td><td>L${d.lvl}</td><td class="${d.active ? "g" : "mu"}">${d.active ? "Active" : "Pending"}</td><td>${money(d.earned)}</td></tr>`).join("")}
+    <tr><td><b>Combined</b></td><td></td><td></td><td></td><td class="g">${money(tot)}</td></tr></table></div>` : "<p>No downlines yet. Share your link.</p>"}</div>`;
+  } else if (r === "earnings") {
+    pg = `<div class="card"><h2>Earnings history</h2>${m.history.length ? `<div class="tw"><table><tr><th>Date</th><th>Type</th><th>From</th><th>Amount</th></tr>
+    ${m.history.map((h) => `<tr><td>${h.created.slice(0, 10)}</td><td>${h.kind === "reward" ? "Reward L" + h.level + (Date.now() - Date.parse(h.created) < m.holdHours * 3600e3 ? " (pending)" : "") : h.kind === "payout_hold" ? "Withdrawal" : "Refund"}</td><td>${esc(h.src || "")}</td><td class="${h.amount < 0 ? "mu" : "g"}">${h.amount < 0 ? "" : "+"}${money(h.amount)}</td></tr>`).join("")}</table></div>` : "<p>Nothing yet.</p>"}</div>`;
+  } else {
+    const can = m.balance >= m.payoutMin, st = { processing: "Sending", paid: "Paid", failed: "Failed, refunded" };
+    pg = `<div class="card"><h2>Withdraw to mobile money</h2>
+    <p>Available ${money(m.balance)}.${m.pendingAmount > 0 ? " Another " + money(m.pendingAmount) + " becomes available within " + m.holdHours + " hours." : ""} New earnings can be withdrawn ${m.holdHours} hours after you earn them. Withdraw any amount from ${money(m.payoutMin)} up to your balance, any time. A ${money(m.fee)} transfer fee applies. Money goes to your registered mobile money number.</p>
+    <input id="amt" type="number" inputmode="decimal" min="${m.payoutMin / 100}" step="0.01" placeholder="Amount (GH₵)"><p id="rcv" class="mu" style="font-size:14px;min-height:20px"></p><p class="err" id="err"></p>
+    <div class="row"><button class="alt" id="all" style="flex:1" ${can ? "" : "disabled"}>Withdraw all</button><button id="req" style="flex:1" ${can ? "" : "disabled"}>Withdraw now</button></div></div>
+    <div class="card"><h2>Your withdrawals</h2>${m.payouts.length ? `<div class="tw"><table><tr><th>Date</th><th>Amount</th><th>Status</th></tr>${m.payouts.map((p) => `<tr><td>${p.created.slice(0, 10)}</td><td>${money(p.amount)}</td><td>${st[p.status] || p.status}</td></tr>`).join("")}</table></div>` : "<p>No withdrawals yet.</p>"}</div>`;
+  }
+  $("app").innerHTML = `<h1>Hi, ${esc(m.name)}</h1><div class="tabs">${tabs.map((t) => `<a href="#${t[0]}" class="${t[0] === r ? "on" : ""}">${t[1]}</a>`).join("")}</div>${pg}<button class="alt" id="out">Log out</button>`;
+  $("out").onclick = () => { setToken(null); ME = null; authView(); };
+  if ($("cp")) $("cp").onclick = () => { try { navigator.clipboard.writeText($("lk").value); $("cp").textContent = "Copied"; } catch (e) { $("lk").select(); } };
+  if ($("buy")) $("buy").onclick = async () => { $("buy").disabled = true; try { location.href = (await api("/checkout", {})).url; } catch (e) { $("err").textContent = e.message; $("buy").disabled = false; } };
+  if ($("amt")) $("amt").oninput = () => { const v = parseFloat($("amt").value); $("rcv").textContent = v > 0 ? "You receive " + money(Math.max(0, Math.round(v * 100) - m.fee)) : ""; };
+  if ($("all")) $("all").onclick = () => { $("amt").value = (m.balance / 100).toFixed(2); $("amt").oninput(); };
+  if ($("req")) $("req").onclick = async () => { $("req").disabled = true; try { await api("/payout", { amount: $("amt").value }); await boot(); } catch (e) { $("err").textContent = e.message; $("req").disabled = false; } };
+}
+
+async function boot() {
+  try { CFG = await api("/config"); } catch (e) {}
+  const ref = new URLSearchParams(location.search).get("reference");
+  if (ref) {
+    if (TOKEN) { try { await api("/verify?reference=" + encodeURIComponent(ref)); } catch (e) {} }
+    history.replaceState(null, "", "/#home");
+  }
+  if (!TOKEN) return authView();
+  try { ME = await api("/me"); appView(); } catch (e) { authView(); }
+}
+window.addEventListener("hashchange", () => { if (ME) appView(); });
+if (refParam && !TOKEN) mode = "signup";
+boot();
+</script>
+</body>
+</html>

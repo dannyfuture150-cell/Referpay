@@ -32,7 +32,7 @@ payments into your balance before rewards leave it. Rewards are paid on real pro
 2. Keep it secret. This is your `DATABASE_URL`. The tables are created automatically on the first request.
 
 ## 2. Deploy on Render
-1. Unzip this project and upload it to a **GitHub** repository (do not upload a `.env` file).
+1. Unzip this project and upload it to a **GitHub** repository (do not upload a `.env` file; on a phone, select all the unzipped FILES in the Upload files screen).
 2. On render.com choose **New, Blueprint** and pick the repo (it reads `render.yaml`), or choose **New, Web Service**
    and set: Runtime Node, Build `npm install`, Start `npm start`, Instance type **Free**.
 3. Set these environment variables:

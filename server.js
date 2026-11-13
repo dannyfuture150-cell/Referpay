@@ -71,7 +71,10 @@ function adminAuth(req, res, next) {
 const app = express();
 app.set('trust proxy', 1);
 app.use(express.json({ limit: '50kb' }));
-app.use(express.static(path.join(__dirname, 'public')));
+// The whole app is one page, index.html. It can sit next to server.js (flat upload) or inside a public/ folder.
+const fs = require('fs');
+const INDEX = [path.join(__dirname, 'index.html'), path.join(__dirname, 'public', 'index.html')].find((p) => fs.existsSync(p));
+app.get('/', (req, res) => (INDEX ? res.sendFile(INDEX) : res.status(500).send('index.html is missing from the project.')));
 
 // Make sure the app is configured and the tables exist before handling any API request.
 app.use('/api', (req, res, next) => {

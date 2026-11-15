@@ -26,6 +26,14 @@ th,td{text-align:left;padding:9px 6px;border-top:1px solid var(--line);white-spa
 .g{color:var(--accent);font-weight:600}.mu{color:var(--muted)}.err{color:var(--err);font-size:14px;margin:0 0 10px;min-height:0}
 .row{display:flex;gap:8px}.row input{margin:0}.row button{width:auto;padding:12px 16px}
 a.lnk{color:var(--accent);font-weight:600;cursor:pointer}
+
+.kids{margin-left:12px;padding-left:10px;border-left:2px solid var(--line)}
+.tree summary{cursor:pointer;padding:7px 0;list-style:none}.tree summary::-webkit-details-marker{display:none}
+.tree summary::before{content:"\25B8  ";color:var(--muted)}.tree details[open]>summary::before{content:"\25BE  "}
+.leaf{padding:7px 0}.you{font-weight:700;padding:4px 0 6px}
+.sd{display:inline-block;width:20px;height:20px;line-height:20px;text-align:center;border-radius:6px;background:var(--line);font-size:11px;font-weight:700;margin-right:6px}
+a.btn{display:block;text-align:center;text-decoration:none;padding:13px;border-radius:10px;background:var(--accent);color:var(--accent-t);font-weight:600}
+a.btn.alt{background:transparent;color:var(--text);border:1px solid var(--line)}
 </style>
 </head>
 <body>
@@ -34,24 +42,67 @@ a.lnk{color:var(--accent);font-weight:600;cursor:pointer}
 const $ = (id) => document.getElementById(id);
 const money = (p) => "GH₵" + (p / 100).toFixed(2);
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+let PENDING = null; try { PENDING = JSON.parse(localStorage.getItem("rp_pending")); } catch (e) {}
+const setPending = (v) => { PENDING = v; try { v ? localStorage.setItem("rp_pending", JSON.stringify(v)) : localStorage.removeItem("rp_pending"); } catch (e) {} };
 let TOKEN = null, ME = null, mode = "login", NOTICE = "", AUTHERR = "", CFG = { price: 5000 };
 try { TOKEN = localStorage.getItem("rp_token"); } catch (e) {}
 const setToken = (t) => { TOKEN = t; try { t ? localStorage.setItem("rp_token", t) : localStorage.removeItem("rp_token"); } catch (e) {} };
 
 async function api(path, body) {
-  const r = await fetch("/api" + path, {
-    method: body ? "POST" : "GET",
-    headers: { "Content-Type": "application/json", ...(TOKEN ? { Authorization: "Bearer " + TOKEN } : {}) },
-    body: body ? JSON.stringify(body) : undefined,
-  });
+  let r;
+  try {
+    r = await fetch("/api" + path, {
+      method: body ? "POST" : "GET",
+      headers: { "Content-Type": "application/json", ...(TOKEN ? { Authorization: "Bearer " + TOKEN } : {}) },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+  } catch (e) { throw new Error("Can't reach the server. If the site was idle, wait a minute and try again."); }
   const j = await r.json().catch(() => ({}));
   if (!r.ok) { if (r.status === 401 && TOKEN) { setToken(null); ME = null; } throw new Error(j.error || "Something went wrong."); }
   return j;
 }
 
-const tabs = [["home", "Home"], ["downlines", "Downlines"], ["earnings", "Earnings"], ["payout", "Withdraw"]];
+const tabs = [["home", "Home"], ["downlines", "Downlines"], ["tree", "Tree"], ["earnings", "Earnings"], ["payout", "Withdraw"]];
 const route = () => { const h = (location.hash || "#home").slice(1); return tabs.some((t) => t[0] === h) ? h : "home"; };
 const refParam = new URLSearchParams(location.search).get("ref") || "";
+
+// MANUAL payment: show who to pay, take the MoMo transaction ID, then wait for the merchant to approve.
+function payView(i) {
+  setPending({ ref: i.reference, phone: i.phone });
+  $("app").innerHTML = `<h1>Pay to join</h1><div class="card"><h2>Send ${money(i.amount)} by mobile money</h2>
+  <p>Send exactly ${money(i.amount)} to:</p>
+  <p style="font-size:18px;color:var(--text);margin:0"><b>${esc(i.name)}</b></p><p style="margin:0">${esc(i.network)} MoMo number</p>
+  <div class="row" style="margin:6px 0 10px"><input id="mn" value="${esc(i.number)}" readonly style="font-size:18px"><button id="cpn">Copy</button></div>
+  <p>Reference: <b>${esc(i.reference)}</b> (add it as the payment reference if your phone asks).</p>
+  <p>Then enter the transaction ID from your MoMo confirmation message and tap the button.</p>
+  <input id="tx" placeholder="MoMo transaction ID"><p class="err" id="err"></p>
+  <button id="paid">I have paid</button></div><button class="alt" id="back">Back</button>`;
+  $("cpn").onclick = () => { try { navigator.clipboard.writeText(i.number); $("cpn").textContent = "Copied"; } catch (e) { $("mn").select(); } };
+  $("back").onclick = () => authView();
+  $("paid").onclick = async () => {
+    $("paid").disabled = true; $("err").textContent = "";
+    try { await api("/signup/paid", { reference: i.reference, phone: i.phone, txnId: $("tx").value }); waitView({ ref: i.reference, phone: i.phone }); }
+    catch (e) { $("err").textContent = e.message; $("paid").disabled = false; }
+  };
+}
+function waitView(p) {
+  $("app").innerHTML = `<h1>Payment received</h1><div class="card"><h2>Waiting for confirmation</h2>
+  <p>Thank you. Once your payment is confirmed your account is created and you can log in. Tap below to check.</p>
+  <p class="err" id="err"></p><p class="g" id="ok"></p><button id="chk">Check status</button></div><button class="alt" id="back">Back</button>`;
+  $("back").onclick = () => authView();
+  $("chk").onclick = async () => {
+    $("chk").disabled = true; $("err").textContent = ""; $("ok").textContent = "";
+    try {
+      const r = await api("/signup/status?reference=" + encodeURIComponent(p.ref) + "&phone=" + encodeURIComponent(p.phone));
+      if (r.status === "completed") { setPending(null); NOTICE = "Your payment is confirmed. Your account is ready. Log in below."; mode = "login"; return authView(); }
+      if (r.status === "rejected" || r.status === "conflict") { setPending(null); $("err").textContent = "We could not confirm this payment. Please contact the merchant."; }
+      else if (r.status === "pending" && r.manual) { payView(r.manual); $("err").textContent = "Enter your MoMo transaction ID to continue."; return; }
+      else if (r.status === "pending") $("err").textContent = "We have not received your transaction ID yet.";
+      else $("ok").textContent = "Still waiting for the merchant to confirm. Please check again soon.";
+    } catch (e) { $("err").textContent = e.message; }
+    $("chk").disabled = false;
+  };
+}
 
 function authView() {
   const su = mode === "signup";
@@ -62,9 +113,10 @@ function authView() {
   <input id="ref" placeholder="Referral code" value="${esc(refParam)}">
   <select id="side"><option value="">Join which side? (Left or Right)</option><option value="L">Left</option><option value="R">Right</option></select>` : ""}
   <input id="password" type="password" placeholder="Password (8+ characters)" autocomplete="${su ? "new-password" : "current-password"}">
-  ${su ? `<p>Create your account first. To unlock your referral link and earn rewards, you then activate it with a one-time ${money(CFG.price)} payment.</p>` : ""}<p class="err" id="err"></p><button id="go">${su ? "Create account" : "Log in"}</button></div>
+  ${su ? `<p>Joining costs ${money(CFG.price)} (mobile money or card). Up to ${money(CFG.rewardMax || 2000)} of it goes to rewards for members above you. The rest covers platform costs and running the business.</p>` : ""}<p class="err" id="err"></p><button id="go">${su ? (CFG.mode === "manual" ? "Continue to payment" : "Pay " + money(CFG.price) + " and sign up") : "Log in"}</button></div>
   <p style="text-align:center"><a class="lnk" id="sw">${su ? "I already have an account" : "Create an account"}</a></p>`;
   $("err").textContent = AUTHERR; AUTHERR = "";
+  if (PENDING) { $("app").insertAdjacentHTML("beforeend", '<p style="text-align:center"><a class="lnk" id="chkpay">Check my payment status</a></p>'); $("chkpay").onclick = () => waitView(PENDING); }
   $("sw").onclick = () => { mode = su ? "login" : "signup"; authView(); };
   $("go").onclick = async () => {
     const v = (id) => ($(id) ? $(id).value.trim() : undefined);
@@ -73,6 +125,7 @@ function authView() {
       const body = su ? { name: v("name"), email: v("email"), phone: v("phone"), network: v("network"), ref: v("ref"), side: v("side"), password: $("password").value }
                       : { phone: v("phone"), password: $("password").value };
       const r = await api(su ? "/signup" : "/login", body);
+      if (su) { if (r.manual) return payView(r.manual); location.href = r.url; return; }
       NOTICE = ""; setToken(r.token); await boot();
     } catch (e) { $("err").textContent = e.message; $("go").disabled = false; }
   };
@@ -83,11 +136,8 @@ function activateView() {
   $("app").innerHTML = `<h1>Hi, ${esc(m.name)}</h1>
   <div class="card"><h2>Activate your account</h2>
   <p style="font-size:26px;font-weight:700;color:var(--text)">${money(m.price)} <span style="font-size:14px;font-weight:400" class="mu">one-time</span></p>
-  <p>Activation unlocks your referral link and lets you earn rewards when people you refer, and people they refer, activate their accounts.</p>
-  <p style="margin-bottom:4px"><b>Where the ${money(m.price)} goes</b></p>
-  <p style="margin:0">Up to ${money(m.rewards.both * 2)}: rewards for members above you</p>
-  <p>The rest: platform costs and running the business</p>
-  <p>Earnings are not guaranteed. You only earn if people you refer also activate.</p>
+  <p>Up to ${money(m.rewards.max)} of this goes to rewards for members above you. The rest covers platform costs and running the business.</p>
+  <p class="mu" style="font-size:12px">Earnings are not guaranteed.</p>
   <p class="err" id="err"></p>
   <button id="buy">Pay ${money(m.price)} to activate</button>
   <button class="alt" id="chk" style="margin-top:10px">I have already paid, check again</button></div>
@@ -102,15 +152,34 @@ function appView() {
   const r = route(), m = ME, nL = m.downlines.filter((d) => d.leg === "L").length, nR = m.downlines.filter((d) => d.leg === "R").length;
   let pg = "";
   if (r === "home") {
+    // Next payout = rewards still in the waiting period, which become withdrawable within holdHours
+    const pend = m.history.filter((x) => ["reward", "bonus", "cycle", "coin_cash"].includes(x.kind) && Date.now() - Date.parse(x.created) < m.holdHours * 3600e3);
+    const nextAt = pend.length ? Math.min(...pend.map((x) => Date.parse(x.created))) + m.holdHours * 3600e3 : 0;
+    const bz = m.bonus, rw = m.rewards;
+    const bonusCard = `<div class="card"><h2>Your bonuses</h2>` + (bz.stage === 0
+      ? `<p>Refer your first person and earn ${money(rw.first)} when they pay.</p>`
+      : bz.stage === 1 ? `<p>First referral bonus earned. Get someone to pay on your other side to earn another ${money(rw.second)}.</p>`
+      : `<p>New people since your last pair bonus: ${Math.min(bz.leftNew, rw.perSide)} of ${rw.perSide} on your left, ${Math.min(bz.rightNew, rw.perSide)} of ${rw.perSide} on your right. You earn ${money(rw.cycle)} each time you reach ${rw.perSide} on both sides. Pair bonuses so far: ${bz.cycles}.</p>`) + `</div>`;
+    const cn = m.coins, cr = m.coinRules, cg = Math.floor(cn.available / cr.coinsPerCashout);
+    const coinCard = `<div class="card"><div style="display:flex;align-items:center;justify-content:space-between;gap:10px"><div><h2 style="margin:0 0 4px">Coins</h2><small>${cn.nextIn} more ${cn.nextIn === 1 ? "person" : "people"} for your next coin</small></div><div class="big">🪙 ${cn.available}</div></div>
+    <p style="margin:10px 0">Every ${cr.referralsPerCoin} people who join with your code earns 1 coin. ${cr.coinsPerCashout} coins = ${money(cr.cashout)}.</p>
+    <p class="err" id="cerr"></p>
+    <button id="conv" ${cg > 0 ? "" : "disabled"}>${cg > 0 ? "Convert " + cg * cr.coinsPerCashout + " coins to " + money(cg * cr.cashout) : "Need " + cr.coinsPerCashout + " coins to convert"}</button></div>`;
+    const annCard = m.announcements && m.announcements.length ? `<div class="card"><h2>📢 Announcements</h2>${m.announcements.map((a, i) => `<div style="padding:8px 0;${i ? "border-top:1px solid var(--line)" : ""}"><div style="white-space:pre-wrap">${esc(a.message)}</div><small>${esc(String(a.created).slice(0, 10))}</small></div>`).join("")}</div>` : "";
+    const sp = m.support || {};
+    const waText = encodeURIComponent("Hello, I need help with ReferPay. My name is " + m.name + " and my referral code is " + m.code + ".");
+    const helpCard = sp.channelUrl || sp.whatsapp ? `<div class="card"><h2>Community and support</h2>${sp.channelUrl ? `<a class="btn" href="${esc(sp.channelUrl)}" target="_blank" rel="noopener">Join our WhatsApp channel</a>` : ""}${sp.whatsapp ? `<a class="btn alt" href="https://wa.me/${esc(sp.whatsapp)}?text=${waText}" target="_blank" rel="noopener" style="margin-top:${sp.channelUrl ? "10px" : "0"}">Contact support on WhatsApp</a>` : ""}</div>` : "";
+    const hrs = nextAt ? Math.max(1, Math.ceil((nextAt - Date.now()) / 3600e3)) : 0;
     const link = location.origin + "/?ref=" + m.code;
-    pg = `<div class="grid"><div class="card"><div class="big g">${money(m.balance)}</div><small>Available to withdraw</small></div>
+    pg = `${annCard}<div class="grid"><div class="card"><div class="big g">${money(m.balance)}</div><small>Available to withdraw</small></div>
     <div class="card"><div class="big">${m.downlines.length}</div><small>Downlines (combined)</small></div>
     <div class="card"><div class="big">${m.downlines.filter((d) => d.active).length}</div><small>Active</small></div>
     <div class="card"><div class="big">${m.downlines.filter((d) => !d.active).length}</div><small>Pending</small></div>
     <div class="card"><div class="big">${nL}</div><small>Left side</small></div><div class="card"><div class="big">${nR}</div><small>Right side</small></div></div>
-    ${m.pendingAmount > 0 ? `<p class="mu" style="margin:0 0 14px">${money(m.pendingAmount)} of new earnings becomes available to withdraw within ${m.holdHours} hours.</p>` : ""}
-    <div class="card"><h2>Your referral link</h2><div class="row"><input id="lk" value="${esc(link)}" readonly><button id="cp">Copy</button></div>
-    <p style="margin-top:10px">Code: <b>${esc(m.code)}</b>. When anyone below you activates their account, you earn ${money(m.rewards.both)} if you have people on both your left and right sides, or ${money(m.rewards.one)} if only one side. The amount halves for each level between you and the buyer, with a minimum of GH₵0.01, all the way to the top.</p></div>
+    <div class="grid"><div class="card" style="text-align:center"><small>Next payout</small><div class="big g">${money(m.pendingAmount)}</div><small>${m.pendingAmount > 0 ? "available to withdraw within " + m.holdHours + " hours" + (hrs ? " (first part in about " + hrs + "h)" : "") : "nothing waiting right now"}</small></div><div class="card"><small>Total withdrawn</small><div class="big">${money(m.withdrawn.paid)}</div><small>${m.withdrawn.waiting > 0 ? money(m.withdrawn.waiting) + " waiting to be sent" : "paid out so far"}</small></div></div>
+    ${bonusCard}${coinCard}<div class="card"><h2>Your referral link</h2><div class="row"><input id="lk" value="${esc(link)}" readonly><button id="cp">Copy</button></div>
+    <p style="margin-top:10px">Code: <b>${esc(m.code)}</b>. You earn ${money(m.rewards.first)} when your first referral pays and ${money(m.rewards.second)} when someone pays on your other side. After that you earn ${money(m.rewards.cycle)} each time ${m.rewards.perSide} new people join your left side and ${m.rewards.perSide} join your right, even if you did not refer them.</p></div>
+    ${helpCard}
     <p class="err" id="err"></p>`;
   } else if (r === "downlines") {
     const tot = m.downlines.reduce((a, d) => a + d.earned, 0);
@@ -119,13 +188,29 @@ function appView() {
     ${m.downlines.length ? `<div class="tw"><table><tr><th>Name</th><th>Side</th><th>Level</th><th>Status</th><th>You earned</th></tr>
     ${m.downlines.map((d) => `<tr><td>${esc(d.name)}${d.direct ? " ★" : ""}</td><td>${d.leg === "L" ? "Left" : "Right"}</td><td>L${d.lvl}</td><td class="${d.active ? "g" : "mu"}">${d.active ? "Active" : "Pending"}</td><td>${money(d.earned)}</td></tr>`).join("")}
     <tr><td><b>Combined</b></td><td></td><td></td><td></td><td class="g">${money(tot)}</td></tr></table></div>` : "<p>No downlines yet. Share your link.</p>"}</div>`;
+  } else if (r === "tree") {
+    const kids = {};
+    m.downlines.forEach((d) => { (kids[d.parent_id] = kids[d.parent_id] || {})[d.side] = d; });
+    const empty = (s) => [`<div class="leaf"><span class="sd">${s}</span><span class="mu">empty</span></div>`, 0];
+    const node = (d) => {
+      const c = kids[d.id] || {}, label = `<span class="sd">${d.side}</span>${esc(d.name)}${d.direct ? " ★" : ""} <span class="${d.active ? "g" : "mu"}">${d.active ? "●" : "○"}</span>`;
+      if (!c.L && !c.R) return [`<div class="leaf">${label}</div>`, 0];
+      const parts = ["L", "R"].map((s) => (c[s] ? node(c[s]) : empty(s)));
+      const below = parts.reduce((a, p) => a + p[1], 0) + (c.L ? 1 : 0) + (c.R ? 1 : 0);
+      return [`<details ${d.lvl < 3 ? "open" : ""}><summary>${label} <span class="mu">· ${below} below</span></summary><div class="kids">${parts.map((p) => p[0]).join("")}</div></details>`, below];
+    };
+    const root = kids[m.id] || {};
+    pg = `<div class="card tree"><h2>Your binary tree</h2>
+    <p>L is left, R is right. ● paid, ○ not paid, ★ you referred them. Tap a name to open or close its branch.</p>
+    <div class="you">You (${esc(m.name)})</div>
+    <div class="kids">${["L", "R"].map((s) => (root[s] ? node(root[s])[0] : empty(s)[0])).join("")}</div></div>`;
   } else if (r === "earnings") {
     pg = `<div class="card"><h2>Earnings history</h2>${m.history.length ? `<div class="tw"><table><tr><th>Date</th><th>Type</th><th>From</th><th>Amount</th></tr>
-    ${m.history.map((h) => `<tr><td>${h.created.slice(0, 10)}</td><td>${h.kind === "reward" ? "Reward L" + h.level + (Date.now() - Date.parse(h.created) < m.holdHours * 3600e3 ? " (pending)" : "") : h.kind === "payout_hold" ? "Withdrawal" : "Refund"}</td><td>${esc(h.src || "")}</td><td class="${h.amount < 0 ? "mu" : "g"}">${h.amount < 0 ? "" : "+"}${money(h.amount)}</td></tr>`).join("")}</table></div>` : "<p>Nothing yet.</p>"}</div>`;
+    ${m.history.map((h) => `<tr><td>${h.created.slice(0, 10)}</td><td>${["reward", "bonus", "cycle"].includes(h.kind) ? (h.kind === "bonus" ? "Referral bonus" : h.kind === "cycle" ? "Pair bonus" : "Reward L" + h.level) + (Date.now() - Date.parse(h.created) < m.holdHours * 3600e3 ? " (pending)" : "") : h.kind === "coin_cash" ? "Coins cash-out" : h.kind === "payout_hold" ? "Withdrawal" : "Refund"}</td><td>${esc(h.src || "")}</td><td class="${h.amount < 0 ? "mu" : "g"}">${h.amount < 0 ? "" : "+"}${money(h.amount)}</td></tr>`).join("")}</table></div>` : "<p>Nothing yet.</p>"}</div>`;
   } else {
-    const can = m.balance >= m.payoutMin, st = { processing: "Sending", paid: "Paid", failed: "Failed, refunded" };
+    const can = m.balance >= m.payoutMin, st = { pending: "Waiting for merchant", processing: "Sending", paid: "Paid", failed: "Failed, refunded" };
     pg = `<div class="card"><h2>Withdraw to mobile money</h2>
-    <p>Available ${money(m.balance)}.${m.pendingAmount > 0 ? " Another " + money(m.pendingAmount) + " becomes available within " + m.holdHours + " hours." : ""} New earnings can be withdrawn ${m.holdHours} hours after you earn them. Withdraw any amount from ${money(m.payoutMin)} up to your balance, any time. A ${money(m.fee)} transfer fee applies. Money goes to your registered mobile money number.</p>
+    <p>Available ${money(m.balance)}.${m.pendingAmount > 0 ? " Another " + money(m.pendingAmount) + " becomes available within " + m.holdHours + " hours." : ""} New earnings can be withdrawn ${m.holdHours} hours after you earn them. Withdraw any amount from ${money(m.payoutMin)} up to your balance, any time. A ${money(m.fee)} transfer fee applies. Money goes to your registered mobile money number.${m.mode === "manual" ? " The merchant sends it by mobile money after approving your request." : ""}</p>
     <input id="amt" type="number" inputmode="decimal" min="${m.payoutMin / 100}" step="0.01" placeholder="Amount (GH₵)"><p id="rcv" class="mu" style="font-size:14px;min-height:20px"></p><p class="err" id="err"></p>
     <div class="row"><button class="alt" id="all" style="flex:1" ${can ? "" : "disabled"}>Withdraw all</button><button id="req" style="flex:1" ${can ? "" : "disabled"}>Withdraw now</button></div></div>
     <div class="card"><h2>Your withdrawals</h2>${m.payouts.length ? `<div class="tw"><table><tr><th>Date</th><th>Amount</th><th>Status</th></tr>${m.payouts.map((p) => `<tr><td>${p.created.slice(0, 10)}</td><td>${money(p.amount)}</td><td>${st[p.status] || p.status}</td></tr>`).join("")}</table></div>` : "<p>No withdrawals yet.</p>"}</div>`;
@@ -134,6 +219,7 @@ function appView() {
   $("out").onclick = () => { setToken(null); ME = null; authView(); };
   if ($("cp")) $("cp").onclick = () => { try { navigator.clipboard.writeText($("lk").value); $("cp").textContent = "Copied"; } catch (e) { $("lk").select(); } };
   if ($("buy")) $("buy").onclick = async () => { $("buy").disabled = true; try { location.href = (await api("/checkout", {})).url; } catch (e) { $("err").textContent = e.message; $("buy").disabled = false; } };
+  if ($("conv")) $("conv").onclick = async () => { $("conv").disabled = true; try { await api("/coins/convert", {}); await boot(); } catch (e) { $("cerr").textContent = e.message; $("conv").disabled = false; } };
   if ($("amt")) $("amt").oninput = () => { const v = parseFloat($("amt").value); $("rcv").textContent = v > 0 ? "You receive " + money(Math.max(0, Math.round(v * 100) - m.fee)) : ""; };
   if ($("all")) $("all").onclick = () => { $("amt").value = (m.balance / 100).toFixed(2); $("amt").oninput(); };
   if ($("req")) $("req").onclick = async () => { $("req").disabled = true; try { await api("/payout", { amount: $("amt").value }); await boot(); } catch (e) { $("err").textContent = e.message; $("req").disabled = false; } };
@@ -143,6 +229,14 @@ async function boot() {
   try { CFG = await api("/config"); } catch (e) {}
   const ref = new URLSearchParams(location.search).get("reference");
   if (ref) {
+    try {
+      await api("/signup/complete?reference=" + encodeURIComponent(ref));
+      NOTICE = "Payment received. Your account is ready. Log in below.";
+      mode = "login"; setToken(null); history.replaceState(null, "", "/");
+      return authView();
+    } catch (e) {
+      if (e.message !== "Unknown signup.") { AUTHERR = e.message; mode = "signup"; history.replaceState(null, "", "/"); return authView(); }
+    }
     if (TOKEN) { try { await api("/verify?reference=" + encodeURIComponent(ref)); } catch (e) {} }
     history.replaceState(null, "", "/#home");
   }

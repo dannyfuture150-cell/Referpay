@@ -1,25 +1,19 @@
-// Binary reward plan. All amounts are in pesewas (100 pesewas = GH₵1).
-// Every member has a LEFT and a RIGHT side. When someone makes their first purchase, EVERY member above
-// them (all the way to the top) is rewarded:
-//   - GH₵10 if the member has active people on BOTH sides (left and right)
-//   - GH₵5  if only ONE side has active people
-// The reward is for the member directly above the buyer (level 1). Each level further up earns half of
-// the level below it, but never less than 1 pesewa, so everyone up to the top gets something.
-const BOTH_LEGS = 1000;
-const ONE_LEG = 500;
-const DECAY = 0.5;
-const MIN_AMOUNT = 1;
-const MAX_LEVELS = Number(process.env.REWARD_MAX_LEVELS || 1000); // safety limit on how far up we go
+// Reward plan. All amounts are in pesewas (100 pesewas = GH₵1).
+//  1. FIRST REFERRAL:  GH₵5 when the first person you referred (with your code) pays.
+//  2. SECOND REFERRAL: GH₵5 more when a person you referred pays on your OTHER side (so GH₵10 in total).
+//  3. PAIR BONUS:      from then on, GH₵3 every time 2 NEW people join your left side AND 2 NEW people join your right
+//                      side, even if you did not refer them. (Spillover and deeper members count.)
+// Pair bonuses count people within the nearest MAX_LEVELS levels below you, which keeps the cost per sign-up bounded.
+const FIRST_REFERRAL = 500;
+const SECOND_REFERRAL = 500;
+const CYCLE_BONUS = 300;
+const CYCLE_PEOPLE_PER_SIDE = 2;
+const MAX_LEVELS = Number(process.env.REWARD_MAX_LEVELS || 20);
 
-function amountFor(level, bothLegs) {
-  const base = bothLegs ? BOTH_LEGS : ONE_LEG;
-  return Math.max(MIN_AMOUNT, Math.floor(base * Math.pow(DECAY, level - 1)));
-}
+// Coins: every 3 people who join with YOUR code (paid members you sponsored, wherever they end up in the tree)
+// earns you 1 coin. 3 coins convert to GH₵5.
+const REFERRALS_PER_COIN = 3;
+const COINS_PER_CASHOUT = 3;
+const COIN_CASHOUT = 500; // pesewas = GH₵5
 
-// chain = ancestors from the buyer upward: [{ memberId, both }]
-function plan(chain) {
-  return chain.slice(0, MAX_LEVELS).map((c, i) => ({
-    memberId: c.memberId, level: i + 1, both: !!c.both, amount: amountFor(i + 1, c.both),
-  }));
-}
-module.exports = { BOTH_LEGS, ONE_LEG, DECAY, MIN_AMOUNT, MAX_LEVELS, amountFor, plan };
+module.exports = { FIRST_REFERRAL, SECOND_REFERRAL, CYCLE_BONUS, CYCLE_PEOPLE_PER_SIDE, MAX_LEVELS, REFERRALS_PER_COIN, COINS_PER_CASHOUT, COIN_CASHOUT };
